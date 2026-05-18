@@ -68,9 +68,11 @@ cd fast-uma-triton
 
 Usage
 
-```bash
+
 The custom backbone can be applied to an existing FAIRChem predictor unit by
 replacing the backbone attribute.
+
+```bash
 
 import torch
 from fairchem.core.units.mlip_unit import load_predict_unit
