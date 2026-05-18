@@ -74,9 +74,34 @@ class ZeroAllocBackbone(nn.Module):
     """
     Drop-in replacement for the FairChem eSCNMDBackbone.
     Intercepts the data object and feeds it efficiently into the custom kernels.
+
+    Inference only. ``prepare_for_inference`` repacks and deletes the original
+    parameters and sets ``requires_grad=False``, so the wrapped model cannot be
+    fine-tuned or trained after construction. The backward pass in ``ops/`` is
+    used internally for autograd-based force/stress (dE/dpos, dE/dcell) but is
+    not validated for parameter gradients.
+
+    Only lmax == 2 is supported: every Triton kernel is hardcoded for the
+    9-channel (lmax=2) spherical harmonic layout.
     """
     def __init__(self, off_bb, dtype=torch.float32):
         super().__init__()
+
+        # Kernels assume lmax == 2 (9 spherical channels); a backbone with a
+        # different lmax would silently produce wrong numbers, so reject it
+        # here rather than at some opaque point inside a kernel.
+        lmax = getattr(off_bb, "lmax", None)
+        if lmax is not None and lmax != 2:
+            raise ValueError(
+                f"ZeroAllocBackbone only supports lmax=2 (Triton kernels are "
+                f"hardcoded for the 9-channel layout); got lmax={lmax}."
+            )
+        mmax = getattr(off_bb, "mmax", None)
+        if mmax is not None and mmax != 2:
+            raise ValueError(
+                f"ZeroAllocBackbone only supports mmax=2; got mmax={mmax}."
+            )
+
         device = next(off_bb.parameters()).device
         
         B = off_bb.num_distance_basis

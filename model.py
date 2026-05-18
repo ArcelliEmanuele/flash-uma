@@ -26,6 +26,13 @@ def _build_csr_uncached(idx_j: torch.Tensor, N: int):
     return row_ptr, col_idx
 
 def build_csr_cached(idx_j: torch.Tensor, N: int):
+    # MD steps usually keep connectivity fixed while positions change, so the
+    # CSR topology is reused. The key must invalidate on ANY change to idx_j:
+    #   - data_ptr(): catches a freshly allocated / replaced tensor
+    #   - _version: bumped by in-place mutation (same storage, edited contents),
+    #     which data_ptr alone would miss
+    #   - numel()/N/device: guard against shape or device mismatches
+    # Without _version, an in-place edge update would silently reuse stale CSR.
     key = (idx_j.data_ptr(), idx_j._version, idx_j.numel(), N, idx_j.device.index if idx_j.device.type == "cuda" else -1)
     hit = _csr_cache.get(key)
     if hit is not None:
@@ -100,6 +107,14 @@ class Packed_eSCN_Layer(nn.Module):
 
         self.register_buffer('W_conv1_m0', self.W1_m0.data.clone().to(dtype))
         self.register_buffer('b_conv1_m0', self.b1_m0.data.clone().to(dtype))
+
+        # Each m>0 SO(2) channel is a complex-valued linear map W = R + iI acting
+        # on a complex feature x = a + ib, giving (Ra - Ib) + i(Ia + Rb). The
+        # kernels operate on real tensors only, so we stack [real; imag] and
+        # pack the equivalent real block matrix [[R, -I], [I, R]] once here.
+        # Matmul against the stacked vector then reproduces complex multiply
+        # exactly, keeping the SO(2) rotation equivariance with no complex ops
+        # in the hot path.
         W_conv1_m1 = torch.zeros((4 * C, 8 * C), device=device)
         W_conv1_m1[0:2*C, 0:4*C] = self.W1_m1_R.data;   W_conv1_m1[0:2*C, 4*C:8*C] = -self.W1_m1_I.data
         W_conv1_m1[2*C:4*C, 0:4*C] = self.W1_m1_I.data; W_conv1_m1[2*C:4*C, 4*C:8*C] = self.W1_m1_R.data

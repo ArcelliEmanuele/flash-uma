@@ -104,23 +104,28 @@ def measure_performance(model, data, is_custom=False, warmup=10, iters=30):
     peak_mem_mb = torch.cuda.max_memory_allocated() / (1024**2)
     torch.cuda.synchronize()
 
-    # 3. Measure Speed
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
-    
-    start_event.record()
-    for _ in range(iters):
+    # 3. Measure Speed. Time each iteration individually so we can report
+    # spread, not just the mean: MD step-time jitter is itself a meaningful
+    # metric (it bounds worst-case wall clock over a long trajectory).
+    iter_events = [
+        (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+        for _ in range(iters)
+    ]
+    for s_evt, e_evt in iter_events:
         data.pos.grad, data.cell.grad = None, None
+        s_evt.record()
         _ = model(data)
-    end_event.record()
+        e_evt.record()
     torch.cuda.synchronize()
-    
-    avg_time_ms = start_event.elapsed_time(end_event) / iters
+
+    times_ms = np.array([s_evt.elapsed_time(e_evt) for s_evt, e_evt in iter_events])
+    avg_time_ms = float(times_ms.mean())
+    std_time_ms = float(times_ms.std())
 
     if is_custom:
         custom_model.reorder_graph_morton = original_reorder
-        
-    return avg_time_ms, peak_mem_mb
+
+    return avg_time_ms, std_time_ms, peak_mem_mb
 
 # ==============================================================================
 # MAIN SCRIPT
@@ -175,19 +180,19 @@ def run_benchmark():
     pt_model = pt_model.to(device)
     pt_model_compiled = torch.compile(pt_model)
     
-    pt_atoms_time, pt_atoms_mem = [], []
+    pt_atoms_time, pt_atoms_std, pt_atoms_mem = [], [], []
     print(f"--- SWEEP 1: Atoms (Fixed Degree ~{fixed_degree}) ---")
     for (data, actual_e), a in zip(data_atoms, sweep_atoms):
-        ms, mb = measure_performance(pt_model_compiled, data, is_custom=False)
-        pt_atoms_time.append(ms); pt_atoms_mem.append(mb)
-        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(pt_model_compiled, data, is_custom=False)
+        pt_atoms_time.append(ms); pt_atoms_std.append(sd); pt_atoms_mem.append(mb)
+        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
 
-    pt_edges_time, pt_edges_mem = [], []
+    pt_edges_time, pt_edges_std, pt_edges_mem = [], [], []
     print(f"\n--- SWEEP 2: Edges (Fixed Atoms ~{fixed_atoms}) ---")
     for (data, actual_e), e in zip(data_edges, sweep_edges):
-        ms, mb = measure_performance(pt_model_compiled, data, is_custom=False)
-        pt_edges_time.append(ms); pt_edges_mem.append(mb)
-        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(pt_model_compiled, data, is_custom=False)
+        pt_edges_time.append(ms); pt_edges_std.append(sd); pt_edges_mem.append(mb)
+        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
         
     del pt_model, pt_model_compiled; gc.collect(); torch.cuda.empty_cache()
 
@@ -202,19 +207,19 @@ def run_benchmark():
     gpu_model = gpu_model.to(device)
     gpu_model_compiled = torch.compile(gpu_model)
     
-    gpu_atoms_time, gpu_atoms_mem = [], []
+    gpu_atoms_time, gpu_atoms_std, gpu_atoms_mem = [], [], []
     print(f"--- SWEEP 1: Atoms (Fixed Degree ~{fixed_degree}) ---")
     for (data, actual_e), a in zip(data_atoms, sweep_atoms):
-        ms, mb = measure_performance(gpu_model_compiled, data, is_custom=False)
-        gpu_atoms_time.append(ms); gpu_atoms_mem.append(mb)
-        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(gpu_model_compiled, data, is_custom=False)
+        gpu_atoms_time.append(ms); gpu_atoms_std.append(sd); gpu_atoms_mem.append(mb)
+        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
 
-    gpu_edges_time, gpu_edges_mem = [], []
+    gpu_edges_time, gpu_edges_std, gpu_edges_mem = [], [], []
     print(f"\n--- SWEEP 2: Edges (Fixed Atoms ~{fixed_atoms}) ---")
     for (data, actual_e), e in zip(data_edges, sweep_edges):
-        ms, mb = measure_performance(gpu_model_compiled, data, is_custom=False)
-        gpu_edges_time.append(ms); gpu_edges_mem.append(mb)
-        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(gpu_model_compiled, data, is_custom=False)
+        gpu_edges_time.append(ms); gpu_edges_std.append(sd); gpu_edges_mem.append(mb)
+        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
 
     del gpu_model, gpu_model_compiled; gc.collect(); torch.cuda.empty_cache()
 
@@ -232,19 +237,19 @@ def run_benchmark():
     cust_model = cust_model.to(device).eval()
     cust_model_compiled = torch.compile(cust_model)
 
-    cust_atoms_time, cust_atoms_mem = [], []
+    cust_atoms_time, cust_atoms_std, cust_atoms_mem = [], [], []
     print(f"--- SWEEP 1: Atoms (Fixed Degree ~{fixed_degree}) ---")
     for (data, actual_e), a in zip(data_atoms, sweep_atoms):
-        ms, mb = measure_performance(cust_model_compiled, data, is_custom=True)
-        cust_atoms_time.append(ms); cust_atoms_mem.append(mb)
-        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(cust_model_compiled, data, is_custom=True)
+        cust_atoms_time.append(ms); cust_atoms_std.append(sd); cust_atoms_mem.append(mb)
+        print(f"Atoms: {a:<5} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
 
-    cust_edges_time, cust_edges_mem = [], []
+    cust_edges_time, cust_edges_std, cust_edges_mem = [], [], []
     print(f"\n--- SWEEP 2: Edges (Fixed Atoms ~{fixed_atoms}) ---")
     for (data, actual_e), e in zip(data_edges, sweep_edges):
-        ms, mb = measure_performance(cust_model_compiled, data, is_custom=True)
-        cust_edges_time.append(ms); cust_edges_mem.append(mb)
-        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ms | VRAM: {mb:>6.2f} MB")
+        ms, sd, mb = measure_performance(cust_model_compiled, data, is_custom=True)
+        cust_edges_time.append(ms); cust_edges_std.append(sd); cust_edges_mem.append(mb)
+        print(f"Target Degree: {e:<2} | Edges: {actual_e:<6} | Time: {ms:>6.2f} ± {sd:>5.2f} ms | VRAM: {mb:>6.2f} MB")
 
     # ==============================================================================
     # PLOTTING
@@ -253,10 +258,10 @@ def run_benchmark():
     plt.style.use('ggplot')
     fig, axs = plt.subplots(2, 2, figsize=(16, 12))
 
-    # Graph 1: Speed vs Atoms
-    axs[0, 0].plot(sweep_atoms, pt_atoms_time, marker='v', linestyle=':', color='#8EBA42', linewidth=2, label='Baseline (PyTorch)')
-    axs[0, 0].plot(sweep_atoms, gpu_atoms_time, marker='o', linestyle='--', color='#E24A33', linewidth=2, label='Baseline (GPU Triton)')
-    axs[0, 0].plot(sweep_atoms, cust_atoms_time, marker='s', linestyle='-', color='#348ABD', linewidth=2, label='Custom (ZeroAlloc)')
+    # Graph 1: Speed vs Atoms (error bars = ±1 std of per-step time)
+    axs[0, 0].errorbar(sweep_atoms, pt_atoms_time, yerr=pt_atoms_std, marker='v', linestyle=':', color='#8EBA42', linewidth=2, capsize=3, label='Baseline (PyTorch)')
+    axs[0, 0].errorbar(sweep_atoms, gpu_atoms_time, yerr=gpu_atoms_std, marker='o', linestyle='--', color='#E24A33', linewidth=2, capsize=3, label='Baseline (GPU Triton)')
+    axs[0, 0].errorbar(sweep_atoms, cust_atoms_time, yerr=cust_atoms_std, marker='s', linestyle='-', color='#348ABD', linewidth=2, capsize=3, label='Custom (ZeroAlloc)')
     axs[0, 0].set_title(f'Speed vs Number of Atoms\n(Fixed {fixed_degree} Edges/Atom)', fontsize=14)
     axs[0, 0].set_xlabel('Number of Atoms', fontsize=12)
     axs[0, 0].set_ylabel('Time per step (ms)', fontsize=12)
@@ -273,10 +278,10 @@ def run_benchmark():
     axs[0, 1].legend()
     axs[0, 1].grid(True)
 
-    # Graph 3: Speed vs Edges
-    axs[1, 0].plot(sweep_edges, pt_edges_time, marker='v', linestyle=':', color='#8EBA42', linewidth=2, label='Baseline (PyTorch)')
-    axs[1, 0].plot(sweep_edges, gpu_edges_time, marker='^', linestyle='--', color='#E24A33', linewidth=2, label='Baseline (GPU Triton)')
-    axs[1, 0].plot(sweep_edges, cust_edges_time, marker='D', linestyle='-', color='#348ABD', linewidth=2, label='Custom (ZeroAlloc)')
+    # Graph 3: Speed vs Edges (error bars = ±1 std of per-step time)
+    axs[1, 0].errorbar(sweep_edges, pt_edges_time, yerr=pt_edges_std, marker='v', linestyle=':', color='#8EBA42', linewidth=2, capsize=3, label='Baseline (PyTorch)')
+    axs[1, 0].errorbar(sweep_edges, gpu_edges_time, yerr=gpu_edges_std, marker='^', linestyle='--', color='#E24A33', linewidth=2, capsize=3, label='Baseline (GPU Triton)')
+    axs[1, 0].errorbar(sweep_edges, cust_edges_time, yerr=cust_edges_std, marker='D', linestyle='-', color='#348ABD', linewidth=2, capsize=3, label='Custom (ZeroAlloc)')
     axs[1, 0].set_title(f'Speed vs Edges per Atom\n(Fixed {fixed_atoms} Atoms)', fontsize=14)
     axs[1, 0].set_xlabel('Edges per Atom (Degree)', fontsize=12)
     axs[1, 0].set_ylabel('Time per step (ms)', fontsize=12)

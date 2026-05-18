@@ -450,6 +450,13 @@ class GatherWignerSplit(torch.autograd.Function):
         # ----------------------------------------------------
         # AUTOTUNE WARMUP TRICK: Prevent explosive atomic_adds
         # ----------------------------------------------------
+        # This kernel accumulates g_x_in with atomic_add. Triton autotuning
+        # benchmarks the kernel by *actually launching* every candidate config,
+        # so on the first call each trial would atomic_add its contribution
+        # into the real g_x_in buffer, multiply-counting the gradient by the
+        # number of configs tried. To avoid that, prime the autotune cache once
+        # against a throwaway buffer; the real launch below then hits the cache
+        # and runs exactly once into the true g_x_in.
         if not _gather_split_bwd_l1_kernel.cache:
             _dummy_g_x_in = torch.zeros_like(x_in)
             _gather_split_bwd_l1_kernel[grid_bwd](

@@ -545,7 +545,12 @@ class PrecomputeGeometry(torch.autograd.Function):
         BLOCK_C = _np2(C)
         grid = lambda META: (triton.cdiv(E, META['BLOCK_E']),)
 
-        # Autotune warmup trick
+        # Autotune warmup trick: this kernel accumulates g_pos with atomic_add.
+        # Triton autotuning launches every candidate config to time it, so on
+        # the first call each trial would atomic_add into the real gradient
+        # buffer, multiply-counting g_pos by the number of configs tried. Prime
+        # the autotune cache once against throwaway buffers; the real launch
+        # below then hits the cache and runs exactly once.
         if not _geom_bwd_kernel.cache:
             _g_pos_warmup = torch.zeros_like(pos)
             _g_shifts_warmup = torch.zeros_like(shifts)
