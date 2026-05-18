@@ -62,7 +62,7 @@ pip install fairchem-core
 pip install triton>=2.1.0
 
 # 3. Clone this repository
-git clone https://github.com/yourusername/fast-uma-triton.git
+git clone https://github.com/JabekAceus/FlashUMA.git
 cd fast-uma-triton
 ```
 
