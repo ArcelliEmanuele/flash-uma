@@ -17,8 +17,8 @@ Requires a CUDA GPU, PyTorch ≥ 2.0, Triton ≥ 2.1, and `fairchem-core`.
 
 ```bash
 pip install fairchem-core triton>=2.1.0
-git clone https://github.com/yourusername/flash-uma.git
-cd flash-uma
+git clone https://github.com/JabekAceus/FlashUMA.git
+cd FlashUMA
 ```
 
 ## Usage
