@@ -161,12 +161,12 @@ def run_benchmark():
 
     # --- Pre-generate Datasets ---
     print("\nGenerating mock datasets...")
-    sweep_atoms = [100, 200, 500, 1000, 2000]
+    sweep_atoms = [100, 200, 300, 400, 500]
     fixed_degree = 50
     data_atoms = [generate_mock_data(a, fixed_degree, cutoff, device) for a in sweep_atoms]
 
     sweep_edges = [10, 20, 30, 40, 50, 60, 70]
-    fixed_atoms = 1000
+    fixed_atoms = 300
     data_edges = [generate_mock_data(fixed_atoms, e, cutoff, device) for e in sweep_edges]
 
     # ==============================================================================
