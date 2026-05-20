@@ -1,7 +1,3 @@
-Here is the updated `README.md` incorporating the new ASE examples (Surface Relaxation, Crystal Cell Relaxation, Molecular Dynamics, and Spin Gap). 
-
-It now explicitly includes the `model = model.to('cuda')` casts around `prepare_for_inference`, and sets up the dummy vacuum boxes for isolated molecules so that the FAIRChem graph generator runs smoothly.
-
 ***
 
 # FlashUMA
