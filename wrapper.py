@@ -4,6 +4,21 @@ import torch.nn.functional as F
 
 from model import eSCN_Inference_Model
 
+def validate_atoms_data(self, atoms, task_name):
+        """Sets default charge and spin so ASE doesn't crash if they are missing."""
+        if "charge" not in atoms.info: 
+            atoms.info["charge"] = 0
+        if "spin" not in atoms.info: 
+            atoms.info["spin"] = 1 if task_name == "omol" else 0
+
+def on_predict_check(self, data):
+    """Bypass the official consistency checking."""
+    pass
+
+def prepare_for_inference(self, data, settings):
+    """Return self since your backbone doesn't need dynamic graph alterations."""
+    return self
+
 @torch.no_grad()
 def transfer_weights(off_model, cust_model):
     """Copies parameters from official eSCNMDBackbone to Custom eSCN."""
@@ -130,6 +145,21 @@ class ZeroAllocBackbone(nn.Module):
         # Inherit regress config (Stress enabled)
         self.regress_config = off_bb.regress_config
 
+    def validate_atoms_data(self, atoms, task_name):
+        """Sets default charge and spin so ASE doesn't crash if they are missing."""
+        if "charge" not in atoms.info: 
+            atoms.info["charge"] = 0
+        if "spin" not in atoms.info: 
+            atoms.info["spin"] = 1 if task_name == "omol" else 0
+
+    def on_predict_check(self, data):
+        """Bypass the official MOLE consistency checking."""
+        pass
+
+    def prepare_for_inference(self, data, settings):
+        """Return self since your backbone doesn't need dynamic graph alterations."""
+        return self
+
     def csd_embedding(self, charge, spin, dataset=None):
         chg_emb = self.charge_embedding(charge)
         spin_emb = self.spin_embedding(spin)
@@ -139,6 +169,21 @@ class ZeroAllocBackbone(nn.Module):
         return F.silu(self.mix_csd(torch.cat((chg_emb, spin_emb), dim=1)))
 
     def forward(self, data):
+        # 0. Satisfy FAIRChem heads by injecting expected attributes 
+        data.atomic_numbers = data.atomic_numbers.long()
+        data.atomic_numbers_full = data.atomic_numbers
+        data.batch_full = data.batch
+
+        # --- NEW: Enable gradients for autograd forces/stress ---
+        if not self.regress_config.direct_forces:
+            if getattr(self.regress_config, 'forces', False) or getattr(self.regress_config, 'stress', False):
+                data.pos.requires_grad_(True)
+            if getattr(self.regress_config, 'stress', False):
+                # Only enable cell grad if the cell exists and is a float tensor
+                if data.cell is not None and data.cell.is_floating_point():
+                    data.cell.requires_grad_(True)
+        # --------------------------------------------------------
+
         # 1. System Embeddings
         csd_mixed_emb = self.csd_embedding(
             charge=data.charge, spin=data.spin, dataset=getattr(data, 'dataset', None)
