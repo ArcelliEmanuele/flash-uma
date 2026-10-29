@@ -2,7 +2,7 @@
 
 # FlashUMA
 
-Fast inference for [UMA](https://huggingface.co/facebook/UMA) and eSCN models. Drop-in backbone replacement that executes custom Triton kernels and avoids materializing intermediate tensors to HBM — up to **2× faster** and **2.5× less peak VRAM** versus the FAIRChem GPU backend, with numerically equivalent outputs.
+Fast inference for [UMA](https://huggingface.co/facebook/UMA) and eSCN models. Drop-in backbone replacement that executes custom Triton kernels and avoids materializing intermediate tensors to HBM — up to **2× faster** and **2.5× less peak VRAM** versus the older FAIRChem GPU backend. it is now on par with the most recent and fastest UMA-s GPU backend, with numerically equivalent outputs.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c)](https://pytorch.org/)
@@ -20,7 +20,7 @@ Requires a CUDA GPU, PyTorch ≥ 2.0, Triton ≥ 2.1, and `fairchem-core`.
 
 ```bash
 pip install fairchem-core triton>=2.1.0
-git clone https://github.com/JabekAceus/FlashUMA.git
+git clone https://github.com/EmanueleArcelli/FlashUMA.git
 cd FlashUMA
 ```
 
